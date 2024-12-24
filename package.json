@@ -1,0 +1,18 @@
+{
+  "name": "certik-crawler",
+  "version": "1.0.0",
+  "description": "Certik Skynet data crawler",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "security": "node index.js security",
+    "market": "node index.js market",
+    "dev": "node index.js dev"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "mongodb": "^5.0.0",
+    "puppeteer": "^19.6.3",
+    "node-cron": "^3.0.0"
+  }
+}
