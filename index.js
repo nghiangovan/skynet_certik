@@ -20,6 +20,12 @@ if (!MONGO_URL || !SECURITY_SCORES_COLLECTION || !MARKET_DATA_COLLECTION) {
   process.exit(1);
 }
 
+// Add these constants at the top
+const MAX_THREADS = Math.max(os.cpus().length - 2, 1); // Use more threads, leave 2 cores free
+const BATCH_SIZE = 50;
+const MAX_RETRIES = 3;
+const DELAY_BETWEEN_CRAWLERS = 10 * 60 * 1000; // 10 minutes in milliseconds
+
 async function saveCookies(cookies) {
   await fs.writeFile(path.join(__dirname, 'cookies.json'), JSON.stringify(cookies, null, 2));
 }
@@ -34,25 +40,50 @@ async function loadCookies() {
 }
 
 async function setupRequestInterception(page) {
-  await page.setRequestInterception(true);
-
-  page.on('request', request => {
-    if (request.url().includes('query-leaderboard-projects')) {
-      const headers = {
-        'accept': '*/*',
-        'accept-language': 'en-US,en;q=0.9',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-origin',
-        'priority': 'u=1, i',
-        'referer': 'https://skynet.certik.com/leaderboards/security',
-      };
-
-      request.continue({ headers });
-    } else {
-      request.continue();
+  try {
+    // Use a flag on the page object to track interception status
+    if (page._requestInterceptionEnabled) {
+      return;
     }
-  });
+
+    await page.setRequestInterception(true);
+    page._requestInterceptionEnabled = true;
+
+    page.on('request', request => {
+      try {
+        if (request.url().includes('query-leaderboard-projects')) {
+          const headers = {
+            'accept': '*/*',
+            'accept-language': 'en-US,en;q=0.9',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'priority': 'u=1, i',
+            'referer': 'https://skynet.certik.com/leaderboards/security',
+          };
+
+          request.continue({ headers });
+        } else {
+          request.continue();
+        }
+      } catch (error) {
+        // If request is already handled, just log it and continue
+        if (error.message.includes('Request is already handled')) {
+          console.log('Request already handled, continuing...');
+        } else {
+          console.error('Error handling request:', error);
+          try {
+            request.abort();
+          } catch (abortError) {
+            console.error('Error aborting request:', abortError);
+          }
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error setting up request interception:', error);
+    throw error;
+  }
 }
 
 async function initializeBrowser() {
@@ -66,9 +97,16 @@ async function initializeBrowser() {
 }
 
 function extractSecurityScoreData(project) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Skip projects with null/undefined id
+  if (!project.id) {
+    return null;
+  }
+
   return {
-    _id: project.id,
-    id: project.id,
+    projectId: project.id,
     audits: project.audits,
     has3rdPartyAudit: project.has3rdPartyAudit,
     badges: project.badges,
@@ -81,15 +119,22 @@ function extractSecurityScoreData(project) {
     selfReportedMarketCap: project.selfReportedMarketCap,
     projectTokenStatus: project.projectTokenStatus,
     newSecurityScore: project.newSecurityScore,
-    fetchedAt: new Date(),
+    fetchedAt: today,
     updateTimestamp: new Date(),
   };
 }
 
 function extractMarketData(project) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Skip projects with null/undefined id
+  if (!project.id) {
+    return null;
+  }
+
   return {
-    _id: project.id,
-    id: project.id,
+    projectId: project.id,
     labels: project.labels,
     marketCap: project.marketCap,
     marketCapType: project.marketCapType,
@@ -102,9 +147,31 @@ function extractMarketData(project) {
     projectTokenStatus: project.projectTokenStatus,
     tradingVolume: project.tradingVolume,
     previousTradingVolume: project.previousTradingVolume,
-    fetchedAt: new Date(),
+    fetchedAt: today,
     updateTimestamp: new Date(),
   };
+}
+
+async function handleFailedRanges(failedRanges) {
+  console.log('Handling failed ranges:', failedRanges);
+
+  for (const range of failedRanges) {
+    let retryCount = 0;
+    while (retryCount < MAX_RETRIES) {
+      try {
+        console.log(`Retrying range ${range.startSkip}-${range.endSkip} (Attempt ${retryCount + 1}/${MAX_RETRIES})`);
+        await fetchRangeData(range);
+        console.log(`Successfully recovered range ${range.startSkip}-${range.endSkip}`);
+        break;
+      } catch (error) {
+        retryCount++;
+        if (retryCount === MAX_RETRIES) {
+          console.error(`Failed to recover range ${range.startSkip}-${range.endSkip} after ${MAX_RETRIES} attempts`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 5000 * retryCount));
+      }
+    }
+  }
 }
 
 async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collectionName }) {
@@ -129,8 +196,8 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
       timeout: 60000,
     });
 
-    // Wait additional time to ensure page is ready
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Increased initial wait time to ensure stable session
+    await new Promise(resolve => setTimeout(resolve, 15000));
 
     // Connect to MongoDB
     if (!mongoClient) {
@@ -139,14 +206,20 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
     }
     const db = mongoClient.db();
     const collection = db.collection(collectionName);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    // Fetch data for assigned range
     for (let skip = startSkip; skip <= endSkip; skip += limit) {
+      // Add delay between batches (10-30 seconds random delay)
+      const delay = Math.floor(Math.random() * 20000) + 10000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+
       let retryCount = 0;
       const maxRetries = 3;
 
       while (retryCount < maxRetries) {
         try {
+          console.log(`Worker ${pageIndex + 1} fetching skip=${skip} (after ${delay}ms delay)`);
           const response = await page.evaluate(
             async ({ skip, limit }) => {
               const res = await fetch(
@@ -177,19 +250,27 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
           }
 
           // Extract data based on collection type
-          const projectsWithMetadata = response.items.map(project =>
-            collectionName === SECURITY_SCORES_COLLECTION
-              ? extractSecurityScoreData(project)
-              : extractMarketData(project),
-          );
+          const projectsWithMetadata = response.items
+            .map(project =>
+              collectionName === SECURITY_SCORES_COLLECTION
+                ? extractSecurityScoreData(project)
+                : extractMarketData(project),
+            )
+            .filter(project => project !== null); // Filter out null projects
 
-          // Bulk upsert operations
+          // Modified bulk operations
           const bulkOps = projectsWithMetadata.map(project => ({
             updateOne: {
-              filter: { _id: project._id },
+              filter: {
+                projectId: project.projectId,
+                fetchedAt: project.fetchedAt,
+              },
               update: {
-                $set: project,
-                $setOnInsert: { firstFetchedAt: new Date() },
+                $set: {
+                  ...project,
+                  updateTimestamp: new Date(),
+                  updateCount: { $inc: 1 },
+                },
               },
               upsert: true,
             },
@@ -200,13 +281,15 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
           }
 
           console.log(`Worker ${pageIndex + 1} processed skip=${skip}, items=${bulkOps.length}`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          break;
+          break; // Success, exit retry loop
         } catch (error) {
           retryCount++;
           if (retryCount === maxRetries) throw error;
           console.log(`Retry ${retryCount}/${maxRetries} for skip=${skip}`);
-          await new Promise(resolve => setTimeout(resolve, 5000 * retryCount));
+          // Increase delay on retry (10-20 seconds)
+          const retryDelay = Math.floor(Math.random() * 20000) + 10000;
+          console.log(`Waiting ${retryDelay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
       }
     }
@@ -236,32 +319,17 @@ async function ensureCollections() {
     if (!collectionNames.includes(SECURITY_SCORES_COLLECTION)) {
       await db.createCollection(SECURITY_SCORES_COLLECTION);
       console.log(`Created collection: ${SECURITY_SCORES_COLLECTION}`);
-
-      // Create indexes for security scores collection
-      await db
-        .collection(SECURITY_SCORES_COLLECTION)
-        .createIndexes([
-          { key: { id: 1 }, unique: true },
-          { key: { fetchedAt: 1 } },
-          { key: { 'securityScoreV3.rank': 1 } },
-          { key: { 'newSecurityScore.rank': 1 } },
-        ]);
+      await db.collection(SECURITY_SCORES_COLLECTION).createIndex({ projectId: 1, fetchedAt: 1 }, { unique: true });
+      console.log(`Created new index for: ${SECURITY_SCORES_COLLECTION}`);
     }
 
-    // Create market data collection if it doesn't exist
+    // Handle market data collection
     if (!collectionNames.includes(MARKET_DATA_COLLECTION)) {
       await db.createCollection(MARKET_DATA_COLLECTION);
       console.log(`Created collection: ${MARKET_DATA_COLLECTION}`);
-
-      // Create indexes for market data collection
-      await db
-        .collection(MARKET_DATA_COLLECTION)
-        .createIndexes([
-          { key: { id: 1 }, unique: true },
-          { key: { fetchedAt: 1 } },
-          { key: { marketCap: -1 } },
-          { key: { tradingVolume: -1 } },
-        ]);
+      // Create new compound index
+      await db.collection(MARKET_DATA_COLLECTION).createIndex({ projectId: 1, fetchedAt: 1 }, { unique: true });
+      console.log(`Created new index for: ${MARKET_DATA_COLLECTION}`);
     }
   } catch (error) {
     console.error('Error ensuring collections:', error);
@@ -271,48 +339,65 @@ async function ensureCollections() {
 
 async function crawlData(collectionName) {
   try {
-    // Ensure collections exist before starting crawl
     await ensureCollections();
 
     browser = await initializeBrowser();
     const page = await browser.newPage();
+
     await setupRequestInterception(page);
 
-    // Setup request interception for initial page
-    await setupRequestInterception(page);
-
-    await page.goto('https://skynet.certik.com/leaderboards/security', {
-      waitUntil: 'networkidle0',
-      timeout: 60000, // Increase timeout to 60 seconds
-    });
+    // Add timeout and more flexible navigation options
+    try {
+      await page.goto('https://skynet.certik.com/leaderboards/security', {
+        waitUntil: ['domcontentloaded', 'networkidle2'],
+        timeout: 30000, // 30 seconds timeout
+      });
+    } catch (navigationError) {
+      console.warn('Navigation timeout, but continuing...', navigationError.message);
+      // Continue execution even if navigation timeout occurs
+    }
 
     const currentCookies = await page.cookies();
     await saveCookies(currentCookies);
 
+    // Add explicit wait for API readiness
+    await page.waitForFunction(
+      () => {
+        return document.readyState === 'complete';
+      },
+      { timeout: 10000 },
+    );
+
     // Get total items using the same page
     const initialResponse = await page.evaluate(async () => {
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for 2s to ensure page is ready
+      // Increased wait time for page stability
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
-      const res = await fetch(
-        'https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?limit=50&skip=0',
-        {
-          method: 'GET',
-          credentials: 'include',
-          headers: {
-            'accept': '*/*',
-            'accept-language': 'en-US,en;q=0.9',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'referer': 'https://skynet.certik.com/leaderboards/security',
+      try {
+        const res = await fetch(
+          'https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?limit=50&skip=0',
+          {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+              'accept': '*/*',
+              'accept-language': 'en-US,en;q=0.9',
+              'sec-fetch-dest': 'empty',
+              'sec-fetch-mode': 'cors',
+              'sec-fetch-site': 'same-origin',
+              'referer': 'https://skynet.certik.com/leaderboards/security',
+            },
           },
-        },
-      );
+        );
 
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return await res.json();
+      } catch (fetchError) {
+        console.error('Error fetching initial data:', fetchError);
+        throw fetchError;
       }
-      return await res.json();
     });
 
     await page.close();
@@ -320,43 +405,45 @@ async function crawlData(collectionName) {
     const totalItems = initialResponse.page.total;
     console.log(`Total items to fetch: ${totalItems}`);
 
-    // Calculate ranges for workers
-    const limit = 50;
-    const numTabs = Math.min(os.cpus().length - 1, 4); // Limit to 4 tabs max
+    // Calculate ranges for workers - now using MAX_THREADS
+    const limit = BATCH_SIZE;
+    const numTabs = Math.min(MAX_THREADS, Math.ceil(totalItems / limit));
     const itemsPerTab = Math.ceil(totalItems / numTabs);
 
+    console.log(`Using ${numTabs} threads to process ${totalItems} items`);
+
     const tabPromises = [];
+    const ranges = [];
 
     // Create and start tabs
     for (let i = 0; i < numTabs; i++) {
       const startSkip = i * itemsPerTab;
       const endSkip = Math.min((i + 1) * itemsPerTab - 1, totalItems - 1);
 
-      console.log(`Starting tab ${i + 1}/${numTabs} for range ${startSkip}-${endSkip}`);
-
-      const tabData = {
+      const range = {
         startSkip,
         endSkip,
         limit,
         pageIndex: i,
         collectionName,
       };
+      ranges.push(range);
 
-      // Add delay between starting tabs
+      console.log(`Starting tab ${i + 1}/${numTabs} for range ${startSkip}-${endSkip}`);
       await new Promise(resolve => setTimeout(resolve, 1000));
-      tabPromises.push(fetchRangeData(tabData));
+      tabPromises.push(fetchRangeData(range));
     }
 
-    // Wait for all tabs to complete
+    // Wait for all tabs and handle failures
     const results = await Promise.allSettled(tabPromises);
-    console.log('All tabs completed');
+    const failedRanges = ranges.filter((range, index) => results[index].status === 'rejected');
 
-    // Log any errors
-    results.forEach((result, index) => {
-      if (result.status === 'rejected') {
-        console.error(`Tab ${index + 1} failed:`, result.reason);
-      }
-    });
+    if (failedRanges.length > 0) {
+      console.log(`${failedRanges.length} ranges failed, attempting recovery...`);
+      await handleFailedRanges(failedRanges);
+    }
+
+    console.log('All tabs completed');
   } catch (error) {
     console.error('An error occurred:', error);
   } finally {
@@ -389,7 +476,30 @@ process.on('SIGINT', async () => {
   process.exit();
 });
 
-// Replace the command line argument handling with this:
+// Add new function to run both crawlers sequentially
+async function runBothCrawlers() {
+  try {
+    console.log('Starting market data crawler...');
+    await handleMarketDataSchedule();
+
+    const delayMinutes = DELAY_BETWEEN_CRAWLERS / (60 * 1000);
+    console.log(
+      `Security score crawler completed. Waiting ${delayMinutes} minutes before starting market data crawler...`,
+    );
+
+    // Wait between crawlers
+    await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_CRAWLERS));
+
+    console.log('Starting security score crawler...');
+    await handleSecurityScoreSchedule();
+
+    console.log('Both crawlers completed. Setting up scheduled jobs...');
+  } catch (error) {
+    console.error('Error running crawlers:', error);
+  }
+}
+
+// Modify the command line argument handling
 const args = process.argv.slice(2);
 
 if (args[0] === 'security') {
@@ -397,41 +507,52 @@ if (args[0] === 'security') {
 } else if (args[0] === 'market') {
   handleMarketDataSchedule();
 } else if (args[0] === 'dev') {
-  // Development mode - run both crawlers immediately
-  console.log('Running in development mode - executing both crawlers...');
-  handleSecurityScoreSchedule();
-  setTimeout(handleMarketDataSchedule, 5000); // Run market data crawler 5 seconds after security
+  // Development mode - run both crawlers with delay
+  console.log('Running in development mode...');
+  console.log('Starting market data crawler...');
+  handleMarketDataSchedule().then(() => {
+    const delayMinutes = DELAY_BETWEEN_CRAWLERS / (60 * 1000);
+    console.log(
+      `Market data crawler completed. Waiting ${delayMinutes} minutes before starting security score crawler...`,
+    );
+    setTimeout(handleSecurityScoreSchedule, DELAY_BETWEEN_CRAWLERS);
+  });
 } else {
-  // Production mode - set up scheduled jobs
-  console.log('Starting scheduled crawlers...');
+  // Production mode - run both crawlers first, then set up scheduled jobs
+  console.log('Starting in production mode...');
 
-  // Schedule security score crawler to run every Sunday at 00:30 UTC
-  cron.schedule(
-    '30 0 * * 0',
-    () => {
-      console.log('Running scheduled security score crawler...');
-      handleSecurityScoreSchedule();
-    },
-    {
-      timezone: 'UTC',
-    },
-  );
+  // Run both crawlers sequentially first
+  runBothCrawlers().then(() => {
+    console.log('Setting up scheduled crawlers...');
 
-  // Schedule market data crawler to run daily at 00:00 UTC
-  cron.schedule(
-    '0 0 * * *',
-    () => {
-      console.log('Running scheduled market data crawler...');
-      handleMarketDataSchedule();
-    },
-    {
-      timezone: 'UTC',
-    },
-  );
+    // Schedule market data crawler to run daily at 00:00 UTC
+    cron.schedule(
+      '0 0 * * *',
+      () => {
+        console.log('Running scheduled market data crawler...');
+        handleMarketDataSchedule();
+      },
+      {
+        timezone: 'UTC',
+      },
+    );
 
-  console.log('Crawlers scheduled (all times in UTC):');
-  console.log('- Security Scores: Every Sunday at 00:30 UTC');
-  console.log('- Market Data: Daily at 00:00 UTC');
+    // Schedule security score crawler to run every Sunday at 00:30 UTC
+    cron.schedule(
+      '30 0 * * 0',
+      () => {
+        console.log('Running scheduled security score crawler...');
+        handleSecurityScoreSchedule();
+      },
+      {
+        timezone: 'UTC',
+      },
+    );
+
+    console.log('Crawlers scheduled (all times in UTC):');
+    console.log('- Security Scores: Every Sunday at 00:30 UTC');
+    console.log('- Market Data: Daily at 00:00 UTC');
+  });
 }
 
 // Keep the process running

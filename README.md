@@ -1,21 +1,22 @@
-# Certik Crawler
+# Certik Skynet Crawler
 
-A Node.js-based web crawler that collects security scores and market data from Certik Skynet's leaderboard.
+A Node.js application that crawls and stores security scores and market data from Certik Skynet's leaderboards.
 
 ## Features
 
-- Crawls Certik Skynet's leaderboard for security scores and market data
-- Multi-threaded crawling using multiple browser tabs
-- Automatic data storage in MongoDB
-- Scheduled crawling with configurable intervals
-- Error handling and retry mechanisms
+- Multi-threaded crawling with automatic CPU core optimization
+- Scheduled data collection (daily market data and weekly security scores)
+- Rate limit handling with smart delays
+- MongoDB storage with compound indexing
+- Automatic retry mechanism for failed requests
+- Development and production modes
 - Cookie persistence for session management
 
 ## Prerequisites
 
-- Node.js (v14 or higher recommended)
-- MongoDB instance
-- NPM or Yarn package manager
+- Node.js (v16 or higher)
+- MongoDB
+- Yarn or NPM
 
 ## Installation
 
@@ -29,51 +30,68 @@ cd certik-crawler
 2. Install dependencies:
 
 ```bash
+yarn install
+# or
 npm install
 ```
 
-3. Create a `.env` file in the project root with the following variables:
+3. Configure environment variables:
 
+```bash
+cp .env.example .env
 ```
-MONGO_URL=<your-mongodb-connection-string>
+
+4. Update `.env` with your settings:
+
+```env
+# MongoDB Connection
+MONGO_URL=mongodb://localhost:27017/certik_db
+
+# Collection Names
 SECURITY_SCORES_COLLECTION=security_scores
 MARKET_DATA_COLLECTION=market_data
 ```
 
 ## Usage
 
-The crawler can be run in several modes:
-
 ### Production Mode
 
 ```bash
+yarn start
+# or
 npm start
 ```
 
-This will start the crawler with scheduled tasks:
+This will:
 
-- Security Scores: Runs every Sunday at 00:30 UTC
-- Market Data: Runs daily at 00:00 UTC
+1. Run market data crawler immediately
+2. Wait 10 minutes
+3. Run security scores crawler
+4. Set up scheduled jobs:
+   - Market Data: Daily at 00:00 UTC
+   - Security Scores: Weekly on Sunday at 00:30 UTC
 
 ### Development Mode
 
 ```bash
+yarn dev
+# or
 npm run dev
 ```
 
-This will immediately run both crawlers in sequence for testing purposes.
+Runs both crawlers sequentially with delays for testing.
 
 ### Individual Crawlers
 
-Run security scores crawler:
-
 ```bash
+# Run security scores crawler only
+yarn security
+# or
 npm run security
-```
 
-Run market data crawler:
-
-```bash
+# Run market data crawler only
+yarn market
+# or
 npm run market
 ```
 
@@ -83,8 +101,7 @@ npm run market
 
 ```javascript
 {
-  _id: String,
-  id: String,
+  projectId: String,
   audits: Array,
   has3rdPartyAudit: Boolean,
   badges: Array,
@@ -99,7 +116,7 @@ npm run market
   newSecurityScore: Object,
   fetchedAt: Date,
   updateTimestamp: Date,
-  firstFetchedAt: Date
+  updateCount: Number
 }
 ```
 
@@ -107,13 +124,12 @@ npm run market
 
 ```javascript
 {
-  _id: String,
-  id: String,
+  projectId: String,
   labels: Array,
   marketCap: Number,
   marketCapType: String,
   name: String,
-  onboardedAt: String,
+  onboardedAt: Date,
   percentChangeInPrice: Number,
   previousPrice: Number,
   price: Number,
@@ -123,73 +139,99 @@ npm run market
   previousTradingVolume: Number,
   fetchedAt: Date,
   updateTimestamp: Date,
-  firstFetchedAt: Date
+  updateCount: Number
 }
 ```
 
-## Technical Details
+## Configuration
 
-### Performance Optimization
+### Constants
 
-- Uses multiple browser tabs for parallel crawling
-- Number of tabs is automatically adjusted based on CPU cores (max 4)
-- Implements request interception for optimized network requests
-- Includes retry mechanism for failed requests
+- `MAX_THREADS`: Number of concurrent crawlers (CPU cores - 2)
+- `BATCH_SIZE`: Number of items per request (50)
+- `MAX_RETRIES`: Maximum retry attempts for failed requests (3)
+- `DELAY_BETWEEN_CRAWLERS`: Delay between crawlers (10 minutes)
 
-### MongoDB Indexing
+### MongoDB Indexes
 
-The crawler automatically creates the following indexes:
+Both collections use compound unique indexes:
 
-Security Scores Collection:
-
-- `id`: unique index
-- `fetchedAt`
-- `securityScoreV3.rank`
-- `newSecurityScore.rank`
-
-Market Data Collection:
-
-- `id`: unique index
-- `fetchedAt`
-- `marketCap`: descending
-- `tradingVolume`: descending
+```javascript
+{ projectId: 1, fetchedAt: 1 }
+```
 
 ## Error Handling
 
-The crawler implements several error handling mechanisms:
+### Rate Limiting
 
-- Automatic retries for failed requests (max 3 attempts)
-- Session management with cookie persistence
-- Graceful shutdown on process termination
-- Error logging for failed crawl attempts
+- Random delays between requests (10-30 seconds)
+- Increased delays on retry attempts (10-20 seconds)
+- 10-minute delay between crawlers
+- Session persistence using cookies
 
-## Maintenance
+### Retry Mechanism
 
-### Cookie Management
+- Maximum 3 retry attempts per request
+- Exponential backoff with random delays
+- Failed ranges recovery system
 
-Cookies are automatically saved to `cookies.json` and loaded for subsequent runs. If you experience authentication issues, you may need to delete this file to force a new session.
+### Data Validation
 
-### MongoDB Connection
+- Null/undefined project ID filtering
+- Response validation
+- Duplicate prevention using compound indexes
 
-The crawler will automatically create required collections and indexes if they don't exist. Ensure your MongoDB instance has adequate storage space for historical data.
+## Development
+
+### Browser Configuration
+
+```javascript
+browser = await puppeteer.launch({
+  headless: false, // Visual debugging
+  defaultViewport: null,
+});
+```
+
+### Request Interception
+
+Custom headers for all API requests:
+
+```javascript
+{
+  'accept': '*/*',
+  'accept-language': 'en-US,en;q=0.9',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-origin',
+  'priority': 'u=1, i',
+  'referer': 'https://skynet.certik.com/leaderboards/security'
+}
+```
 
 ## Troubleshooting
 
-Common issues and solutions:
+1. **Rate Limiting Issues**
 
-1. **Connection Errors**
+   - Increase `DELAY_BETWEEN_CRAWLERS`
+   - Adjust random delay ranges
+   - Reduce `MAX_THREADS`
 
-   - Verify MongoDB connection string in `.env`
-   - Check if MongoDB instance is running
-   - Ensure network connectivity to MongoDB server
+2. **MongoDB Errors**
 
-2. **Crawling Errors**
+   - Check MongoDB connection string
+   - Verify database permissions
+   - Ensure indexes are properly created
+
+3. **Browser Issues**
 
    - Delete `cookies.json` to reset session
-   - Check console logs for specific error messages
-   - Verify network connectivity to Certik Skynet
+   - Check for Puppeteer compatibility
+   - Verify network connectivity
 
-3. **Performance Issues**
-   - Reduce number of concurrent tabs
-   - Increase delay between requests
-   - Check system resources (CPU, memory)
+## License
+
+[Your License]
+
+## Contributing
+
+[Your Contributing Guidelines]
