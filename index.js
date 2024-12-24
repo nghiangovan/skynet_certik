@@ -197,7 +197,7 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
     });
 
     // Increased initial wait time to ensure stable session
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     // Connect to MongoDB
     if (!mongoClient) {
@@ -210,8 +210,8 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
     today.setHours(0, 0, 0, 0);
 
     for (let skip = startSkip; skip <= endSkip; skip += limit) {
-      // Add delay between batches (10-30 seconds random delay)
-      const delay = Math.floor(Math.random() * 20000) + 10000;
+      // Add delay between batches (5-10 seconds random delay)
+      const delay = Math.floor(Math.random() * 5000) + 5000;
       await new Promise(resolve => setTimeout(resolve, delay));
 
       let retryCount = 0;
@@ -286,8 +286,8 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
           retryCount++;
           if (retryCount === maxRetries) throw error;
           console.log(`Retry ${retryCount}/${maxRetries} for skip=${skip}`);
-          // Increase delay on retry (10-20 seconds)
-          const retryDelay = Math.floor(Math.random() * 20000) + 10000;
+          // Increase delay on retry (5-10 seconds)
+          const retryDelay = Math.floor(Math.random() * 5000) + 5000;
           console.log(`Waiting ${retryDelay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
