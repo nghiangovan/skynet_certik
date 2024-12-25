@@ -24,7 +24,22 @@ if (!MONGO_URL || !SECURITY_SCORES_COLLECTION || !MARKET_DATA_COLLECTION) {
 const MAX_THREADS = Math.max(os.cpus().length - 2, 1); // Use more threads, leave 2 cores free
 const BATCH_SIZE = 50;
 const MAX_RETRIES = 3;
-const DELAY_BETWEEN_CRAWLERS = 10 * 60 * 1000; // 10 minutes in milliseconds
+
+// Delay constants (all in milliseconds)
+const DELAY_BETWEEN_CRAWLERS = 10 * 60 * 1000; // 10 minutes between crawlers
+const DELAY_INITIAL_PAGE_LOAD = 15 * 1000; // 15 seconds for initial page load
+const DELAY_BETWEEN_BATCHES = {
+  // Random delay between batch requests
+  MIN: 10 * 1000, // Minimum 10 seconds
+  MAX: 25 * 1000, // Maximum 25 seconds
+};
+const DELAY_ON_RETRY = {
+  // Random delay for retry attempts
+  MIN: 10 * 1000, // Minimum 10 seconds
+  MAX: 25 * 1000, // Maximum 25 seconds
+};
+const DELAY_BETWEEN_TABS = 1000; // 1 second between starting new tabs
+const DELAY_API_READINESS = 3000; // 3 seconds for API readiness
 
 async function saveCookies(cookies) {
   await fs.writeFile(path.join(__dirname, 'cookies.json'), JSON.stringify(cookies, null, 2));
@@ -168,7 +183,7 @@ async function handleFailedRanges(failedRanges) {
         if (retryCount === MAX_RETRIES) {
           console.error(`Failed to recover range ${range.startSkip}-${range.endSkip} after ${MAX_RETRIES} attempts`);
         }
-        await new Promise(resolve => setTimeout(resolve, 5000 * retryCount));
+        await new Promise(resolve => setTimeout(resolve, DELAY_ON_RETRY.MAX * retryCount));
       }
     }
   }
@@ -197,7 +212,7 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
     });
 
     // Increased initial wait time to ensure stable session
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    await new Promise(resolve => setTimeout(resolve, DELAY_INITIAL_PAGE_LOAD));
 
     // Connect to MongoDB
     if (!mongoClient) {
@@ -210,8 +225,9 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
     today.setHours(0, 0, 0, 0);
 
     for (let skip = startSkip; skip <= endSkip; skip += limit) {
-      // Add delay between batches (5-10 seconds random delay)
-      const delay = Math.floor(Math.random() * 5000) + 5000;
+      // Add delay between batches (10-25 seconds random delay)
+      const delay =
+        Math.floor(Math.random() * (DELAY_BETWEEN_BATCHES.MAX - DELAY_BETWEEN_BATCHES.MIN)) + DELAY_BETWEEN_BATCHES.MIN;
       await new Promise(resolve => setTimeout(resolve, delay));
 
       let retryCount = 0;
@@ -286,8 +302,8 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
           retryCount++;
           if (retryCount === maxRetries) throw error;
           console.log(`Retry ${retryCount}/${maxRetries} for skip=${skip}`);
-          // Increase delay on retry (5-10 seconds)
-          const retryDelay = Math.floor(Math.random() * 5000) + 5000;
+          // Increase delay on retry (10-25 seconds)
+          const retryDelay = Math.floor(Math.random() * (DELAY_ON_RETRY.MAX - DELAY_ON_RETRY.MIN)) + DELAY_ON_RETRY.MIN;
           console.log(`Waiting ${retryDelay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, retryDelay));
         }
@@ -361,12 +377,7 @@ async function crawlData(collectionName) {
     await saveCookies(currentCookies);
 
     // Add explicit wait for API readiness
-    await page.waitForFunction(
-      () => {
-        return document.readyState === 'complete';
-      },
-      { timeout: 10000 },
-    );
+    await new Promise(resolve => setTimeout(resolve, DELAY_API_READINESS));
 
     // Get total items using the same page
     const initialResponse = await page.evaluate(async () => {
@@ -430,7 +441,7 @@ async function crawlData(collectionName) {
       ranges.push(range);
 
       console.log(`Starting tab ${i + 1}/${numTabs} for range ${startSkip}-${endSkip}`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_TABS));
       tabPromises.push(fetchRangeData(range));
     }
 
@@ -537,9 +548,9 @@ if (args[0] === 'security') {
       },
     );
 
-    // Schedule security score crawler to run every Sunday at 00:30 UTC
+    // Schedule security score crawler to run every Sunday at 01:00 UTC
     cron.schedule(
-      '30 0 * * 0',
+      '0 1 * * 0',
       () => {
         console.log('Running scheduled security score crawler...');
         handleSecurityScoreSchedule();
@@ -550,8 +561,8 @@ if (args[0] === 'security') {
     );
 
     console.log('Crawlers scheduled (all times in UTC):');
-    console.log('- Security Scores: Every Sunday at 00:30 UTC');
     console.log('- Market Data: Daily at 00:00 UTC');
+    console.log('- Security Scores: Every Sunday at 01:00 UTC');
   });
 }
 

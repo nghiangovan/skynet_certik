@@ -150,7 +150,12 @@ npm run market
 - `MAX_THREADS`: Number of concurrent crawlers (CPU cores - 2)
 - `BATCH_SIZE`: Number of items per request (50)
 - `MAX_RETRIES`: Maximum retry attempts for failed requests (3)
-- `DELAY_BETWEEN_CRAWLERS`: Delay between crawlers (10 minutes)
+- `DELAY_BETWEEN_CRAWLERS`: 10 minutes between crawlers
+- `DELAY_INITIAL_PAGE_LOAD`: 15 seconds for initial page load
+- `DELAY_BETWEEN_BATCHES`: 10-25 seconds between batch requests
+- `DELAY_ON_RETRY`: 10-25 seconds for retry attempts
+- `DELAY_BETWEEN_TABS`: 1 second between starting new tabs
+- `DELAY_API_READINESS`: 3 seconds for API readiness
 
 ### MongoDB Indexes
 
