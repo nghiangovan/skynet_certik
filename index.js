@@ -26,17 +26,17 @@ const BATCH_SIZE = 50;
 const MAX_RETRIES = 3;
 
 // Delay constants (all in milliseconds)
-const DELAY_BETWEEN_CRAWLERS = 10 * 60 * 1000; // 10 minutes between crawlers
-const DELAY_INITIAL_PAGE_LOAD = 15 * 1000; // 15 seconds for initial page load
+const DELAY_BETWEEN_CRAWLERS = 30 * 60 * 1000; // 30 minutes between crawlers
+const DELAY_INITIAL_PAGE_LOAD = 30 * 1000; // 30 seconds for initial page load
 const DELAY_BETWEEN_BATCHES = {
   // Random delay between batch requests
-  MIN: 10 * 1000, // Minimum 10 seconds
-  MAX: 25 * 1000, // Maximum 25 seconds
+  MIN: 30 * 1000, // Minimum 30 seconds
+  MAX: 40 * 1000, // Maximum 40 seconds
 };
 const DELAY_ON_RETRY = {
   // Random delay for retry attempts
-  MIN: 10 * 1000, // Minimum 10 seconds
-  MAX: 25 * 1000, // Maximum 25 seconds
+  MIN: 30 * 1000, // Minimum 30 seconds
+  MAX: 40 * 1000, // Maximum 40 seconds
 };
 const DELAY_BETWEEN_TABS = 1000; // 1 second between starting new tabs
 const DELAY_API_READINESS = 3000; // 3 seconds for API readiness
@@ -597,21 +597,20 @@ if (args[0] === 'security') {
     // Schedule market data crawler to run daily at 00:00 UTC
     cron.schedule(
       '0 0 * * *',
-      () => {
+      async () => {
         console.log('Running scheduled market data crawler...');
-        handleMarketDataSchedule();
-      },
-      {
-        timezone: 'UTC',
-      },
-    );
+        await handleMarketDataSchedule();
 
-    // Schedule security score crawler to run every Sunday at 01:00 UTC
-    cron.schedule(
-      '0 1 * * 0',
-      () => {
-        console.log('Running scheduled security score crawler...');
-        handleSecurityScoreSchedule();
+        // Only run security score crawler on Sundays
+        if (new Date().getDay() === 0) {
+          const delayMinutes = DELAY_BETWEEN_CRAWLERS / (60 * 1000);
+          console.log(`Waiting ${delayMinutes} minutes before running security score crawler...`);
+
+          setTimeout(async () => {
+            console.log('Running scheduled security score crawler...');
+            await handleSecurityScoreSchedule();
+          }, DELAY_BETWEEN_CRAWLERS);
+        }
       },
       {
         timezone: 'UTC',
@@ -620,7 +619,7 @@ if (args[0] === 'security') {
 
     console.log('Crawlers scheduled (all times in UTC):');
     console.log('- Market Data: Daily at 00:00 UTC');
-    console.log('- Security Scores: Every Sunday at 01:00 UTC');
+    console.log('- Security Scores: Every Sunday after market data crawler completes');
   });
 }
 

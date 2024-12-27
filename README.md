@@ -65,11 +65,11 @@ npm start
 This will:
 
 1. Run market data crawler immediately
-2. Wait 10 minutes
+2. Wait 30 minutes
 3. Run security scores crawler
 4. Set up scheduled jobs:
    - Market Data: Daily at 00:00 UTC
-   - Security Scores: Weekly on Sunday at 00:30 UTC
+   - Security Scores: Every Sunday after market data crawler completes (with 30-minute delay)
 
 ### Development Mode
 
@@ -150,10 +150,10 @@ npm run market
 - `MAX_THREADS`: Number of concurrent crawlers (CPU cores - 2)
 - `BATCH_SIZE`: Number of items per request (50)
 - `MAX_RETRIES`: Maximum retry attempts for failed requests (3)
-- `DELAY_BETWEEN_CRAWLERS`: 10 minutes between crawlers
-- `DELAY_INITIAL_PAGE_LOAD`: 15 seconds for initial page load
-- `DELAY_BETWEEN_BATCHES`: 10-25 seconds between batch requests
-- `DELAY_ON_RETRY`: 10-25 seconds for retry attempts
+- `DELAY_BETWEEN_CRAWLERS`: 30 minutes between crawlers
+- `DELAY_INITIAL_PAGE_LOAD`: 30 seconds for initial page load
+- `DELAY_BETWEEN_BATCHES`: 30-40 seconds between batch requests
+- `DELAY_ON_RETRY`: 30-40 seconds for retry attempts
 - `DELAY_BETWEEN_TABS`: 1 second between starting new tabs
 - `DELAY_API_READINESS`: 3 seconds for API readiness
 
