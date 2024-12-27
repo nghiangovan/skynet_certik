@@ -41,6 +41,27 @@ const DELAY_ON_RETRY = {
 const DELAY_BETWEEN_TABS = 1000; // 1 second between starting new tabs
 const DELAY_API_READINESS = 3000; // 3 seconds for API readiness
 
+// Add these at the top with other requires and constants
+const PROXIES = process.env.PROXIES ? JSON.parse(process.env.PROXIES) : [];
+
+// Add proxy rotation function
+function getNextProxy() {
+  if (!PROXIES.length) return null;
+
+  // Rotate through proxies
+  const proxy = PROXIES.shift();
+  PROXIES.push(proxy);
+
+  // Parse proxy string
+  const [host, port, username, password] = proxy.split(':');
+  return {
+    host,
+    port,
+    username,
+    password,
+  };
+}
+
 async function saveCookies(cookies) {
   await fs.writeFile(path.join(__dirname, 'cookies.json'), JSON.stringify(cookies, null, 2));
 }
@@ -101,11 +122,47 @@ async function setupRequestInterception(page) {
   }
 }
 
+// Add this new function to handle proxy authentication
+async function setupProxyAuth(page, proxy) {
+  if (proxy && proxy.username && proxy.password) {
+    await page.authenticate({
+      username: proxy.username,
+      password: proxy.password,
+    });
+  }
+}
+
+// Modify initializeBrowser to store current proxy
 async function initializeBrowser() {
   if (!browser) {
-    browser = await puppeteer.launch({
-      headless: false, // Set to false for debugging
+    const proxy = getNextProxy();
+    const launchOptions = {
+      headless: false,
       defaultViewport: null,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    };
+
+    if (proxy) {
+      launchOptions.args.push(`--proxy-server=${proxy.host}:${proxy.port}`);
+    }
+
+    browser = await puppeteer.launch(launchOptions);
+
+    // Store the current proxy on the browser instance
+    browser._currentProxy = proxy;
+
+    // Set up proxy authentication for all initial pages
+    const pages = await browser.pages();
+    for (const page of pages) {
+      await setupProxyAuth(page, proxy);
+    }
+
+    // Add listener for new pages
+    browser.on('targetcreated', async target => {
+      if (target.type() === 'page') {
+        const page = await target.page();
+        await setupProxyAuth(page, browser._currentProxy);
+      }
     });
   }
   return browser;
@@ -194,6 +251,7 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
 
   try {
     page = await browser.newPage();
+    // Remove the proxy authentication here since it's handled by the browser event listener
     await page.setDefaultNavigationTimeout(60000);
 
     // Load cookies
