@@ -20,8 +20,10 @@ if (!MONGO_URL || !SECURITY_SCORES_COLLECTION || !MARKET_DATA_COLLECTION) {
   process.exit(1);
 }
 
+const MAX_TOPS_PROJECTS = process.env.MAX_TOPS_PROJECTS ? parseInt(process.env.MAX_TOPS_PROJECTS, 10) : null;
+
 // Add these constants at the top
-const MAX_THREADS = Math.max(os.cpus().length - 2, 1); // Use more threads, leave 2 cores free
+const MAX_THREADS = process.env.MAX_THREADS ? parseInt(process.env.MAX_THREADS, 10) : Math.max(os.cpus().length - 2, 1); // Use default if not set in env
 const BATCH_SIZE = 50;
 const MAX_RETRIES = 3;
 
@@ -297,7 +299,7 @@ async function fetchRangeData({ startSkip, endSkip, limit, pageIndex, collection
           const response = await page.evaluate(
             async ({ skip, limit }) => {
               const res = await fetch(
-                `https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?limit=${limit}&skip=${skip}`,
+                `https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?isClientOnly=false&limit=${limit}&order=ASC&skip=${skip}&sortBy=SECURITY_SCORE`,
                 {
                   method: 'GET',
                   credentials: 'include',
@@ -444,7 +446,7 @@ async function crawlData(collectionName) {
 
       try {
         const res = await fetch(
-          'https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?limit=50&skip=0',
+          'https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?isClientOnly=false&limit=30&order=ASC&skip=0&sortBy=SECURITY_SCORE',
           {
             method: 'GET',
             credentials: 'include',
@@ -471,8 +473,11 @@ async function crawlData(collectionName) {
 
     await page.close();
 
-    const totalItems = initialResponse.page.total;
-    console.log(`Total items to fetch: ${totalItems}`);
+    const totalItems = !!MAX_TOPS_PROJECTS ? MAX_TOPS_PROJECTS : initialResponse.page.total;
+
+    console.log(
+      `Total items to fetch: ${totalItems} ${MAX_TOPS_PROJECTS ? `(limited from ${initialResponse.page.total})` : ''}`,
+    );
 
     // Calculate ranges for workers - now using MAX_THREADS
     const limit = BATCH_SIZE;

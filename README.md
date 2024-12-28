@@ -145,6 +145,14 @@ npm run market
 
 ## Configuration
 
+### Environment Variables
+
+- `MONGO_URL`: MongoDB connection string
+- `SECURITY_SCORES_COLLECTION`: Name of security scores collection
+- `MARKET_DATA_COLLECTION`: Name of market data collection
+- `MAX_THREADS`: (Optional) Number of concurrent crawler threads. Defaults to (CPU cores - 2)
+- `MAX_TOPS_PROJECTS`: (Optional) Limit number of projects to crawl. Defaults to all available projects
+
 ### Constants
 
 - `MAX_THREADS`: Number of concurrent crawlers (CPU cores - 2)
