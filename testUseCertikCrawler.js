@@ -10,6 +10,7 @@ const config = {
   marketDataCollection: process.env.MARKET_DATA_COLLECTION,
   maxThreads: process.env.MAX_THREADS ? parseInt(process.env.MAX_THREADS, 10) : Math.max(os.cpus().length - 2, 1),
   maxTopsProjects: process.env.MAX_TOPS_PROJECTS ? parseInt(process.env.MAX_TOPS_PROJECTS, 10) : null,
+  // proxies: process.env.PROXIES ? JSON.parse(process.env.PROXIES) : [],
   proxies: [],
 };
 

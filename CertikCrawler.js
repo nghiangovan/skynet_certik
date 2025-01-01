@@ -39,10 +39,24 @@ class CertikCrawler {
 
   getNextProxy() {
     if (!this.proxies.length) return null;
+
+    // Rotate through proxies
     const proxy = this.proxies.shift();
     this.proxies.push(proxy);
-    const [host, port, username, password] = proxy.split(':');
-    return { host, port, username, password };
+
+    // Parse proxy string if it's a string, otherwise use as is
+    if (typeof proxy === 'string') {
+      const [host, port, username, password] = proxy.split(':');
+      return {
+        host,
+        port,
+        username,
+        password,
+      };
+    }
+
+    // If proxy is already an object, return as is
+    return proxy;
   }
 
   async saveCookies(cookies) {
@@ -98,13 +112,30 @@ class CertikCrawler {
     }
   }
 
+  async setupProxyAuth(page, proxy) {
+    if (proxy && proxy.username && proxy.password) {
+      await page.authenticate({
+        username: proxy.username,
+        password: proxy.password,
+      });
+    }
+  }
+
   async initializeBrowser() {
     if (!this.browser) {
       const proxy = this.getNextProxy();
       const launchOptions = {
         headless: false,
         defaultViewport: null,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--disable-gpu',
+          '--window-size=1920x1080',
+        ],
+        ignoreHTTPSErrors: true,
       };
 
       if (proxy) {
@@ -112,17 +143,23 @@ class CertikCrawler {
       }
 
       this.browser = await puppeteer.launch(launchOptions);
+
+      // Store the current proxy on the browser instance
       this.browser._currentProxy = proxy;
 
+      // Set up proxy authentication for all initial pages
       const pages = await this.browser.pages();
       for (const page of pages) {
-        if (proxy) {
-          await page.authenticate({
-            username: proxy.username,
-            password: proxy.password,
-          });
-        }
+        await this.setupProxyAuth(page, proxy);
       }
+
+      // Add listener for new pages
+      this.browser.on('targetcreated', async target => {
+        if (target.type() === 'page') {
+          const page = await target.page();
+          await this.setupProxyAuth(page, this.browser._currentProxy);
+        }
+      });
     }
     return this.browser;
   }
