@@ -10,7 +10,8 @@
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "restart": true,
-      "runtimeExecutable": "node"
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--preserve-symlinks"]
     },
     {
       "type": "node",
@@ -22,7 +23,8 @@
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "restart": true,
-      "runtimeExecutable": "node"
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--preserve-symlinks"]
     },
     {
       "type": "node",
@@ -34,7 +36,8 @@
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "restart": true,
-      "runtimeExecutable": "node"
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--preserve-symlinks"]
     }
   ]
 }
