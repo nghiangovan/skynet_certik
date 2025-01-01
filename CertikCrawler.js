@@ -22,15 +22,16 @@ class CertikCrawler {
     this.BATCH_SIZE = 50;
     this.MAX_RETRIES = 3;
     this.DELAY = {
-      BETWEEN_CRAWLERS: 30 * 60 * 1000,
-      INITIAL_PAGE_LOAD: 30 * 1000,
+      DEFAULT_NAVIGATION_TIMEOUT: 50 * 1000,
+      TIMEOUT_INITIAL_PAGE_LOAD: 50 * 1000,
+      INITIAL_PAGE_LOAD: 20 * 1000,
       BETWEEN_BATCHES: {
-        MIN: 30 * 1000,
-        MAX: 40 * 1000,
+        MIN: 15 * 1000,
+        MAX: 25 * 1000,
       },
       ON_RETRY: {
-        MIN: 30 * 1000,
-        MAX: 40 * 1000,
+        MIN: 15 * 1000,
+        MAX: 25 * 1000,
       },
       BETWEEN_TABS: 1000,
       API_READINESS: 3000,
@@ -250,7 +251,7 @@ class CertikCrawler {
 
     try {
       page = await this.browser.newPage();
-      await page.setDefaultNavigationTimeout(60000);
+      await page.setDefaultNavigationTimeout(this.DELAY.DEFAULT_NAVIGATION_TIMEOUT);
 
       const cookies = await this.loadCookies();
       if (cookies.length) {
@@ -261,7 +262,7 @@ class CertikCrawler {
 
       await page.goto('https://skynet.certik.com/leaderboards/security', {
         waitUntil: 'networkidle0',
-        timeout: 60000,
+        timeout: this.DELAY.TIMEOUT_INITIAL_PAGE_LOAD,
       });
 
       await new Promise(resolve => setTimeout(resolve, this.DELAY.INITIAL_PAGE_LOAD));
