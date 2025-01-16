@@ -319,7 +319,7 @@ class CertikCrawler {
     return await page.evaluate(
       async ({ skip, limit }) => {
         const res = await fetch(
-          `https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?isClientOnly=false&limit=${limit}&order=ASC&skip=${skip}&sortBy=SECURITY_SCORE`,
+          `https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?isClientOnly=false&limit=${limit}&order=DESC&skip=${skip}&sortBy=SECURITY_SCORE`,
           {
             method: 'GET',
             credentials: 'include',
