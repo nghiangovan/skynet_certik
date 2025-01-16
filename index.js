@@ -446,7 +446,7 @@ async function crawlData(collectionName) {
 
       try {
         const res = await fetch(
-          'https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?isClientOnly=false&limit=30&order=ASC&skip=0&sortBy=SECURITY_SCORE',
+          'https://skynet.certik.com/api/leaderboard-all-projects/query-leaderboard-projects?isClientOnly=false&limit=30&order=DESC&skip=0&sortBy=SECURITY_SCORE',
           {
             method: 'GET',
             credentials: 'include',
